@@ -2,16 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { verifyAdminSession } from '@/lib/auth';
 
-// 問題の得点を確定
+// ポイントマップを再適用
 export async function POST(
     request: NextRequest,
     { params }: { params: { roomId: string; questionNumber: string } }
 ) {
     try {
-        const roomId = parseInt(params.roomId);
         const questionNumber = parseInt(params.questionNumber);
 
-        if (isNaN(roomId) || isNaN(questionNumber)) {
+        if (isNaN(questionNumber)) {
             return NextResponse.json(
                 { error: '無効なパラメータです' },
                 { status: 400 }
@@ -37,7 +36,7 @@ export async function POST(
             );
         }
 
-        // 部屋情報取得
+        // 部屋情報を特定（部屋コードまたはID）
         let room = await db.room.findUnique({
             where: { room_code: params.roomId },
         });
@@ -58,77 +57,53 @@ export async function POST(
             );
         }
 
-        const resolvedRoomId = room.id;
+        const roomId = room.id;
 
-        // 問題情報取得
-        const question = await db.question.findFirst({
+        // score_tableがnullの場合はデフォルト値を使用
+        const defaultScoreTable = [10, 7, 5, 3, 2, 1];
+        const scoreTable = (room.score_table as number[] | null) || defaultScoreTable;
+
+        // まず全解答の得点を0にリセット（この問題かつ手動編集でないもの、または一括リセット）
+        // ここでは仕様に合わせて、全解答の得点を再計算する
+        await db.answer.updateMany({
             where: {
-                room_id: resolvedRoomId,
+                room_id: roomId,
                 question_number: questionNumber,
             },
+            data: { score: 0 },
         });
 
-        if (!question) {
-            return NextResponse.json(
-                { error: '問題が見つかりません' },
-                { status: 404 }
-            );
-        }
-
-        // 正解とマークされた解答を解答時間順に取得
+        // 正解の解答を解答時間順に取得
         const correctAnswers = await db.answer.findMany({
             where: {
-                room_id: resolvedRoomId,
+                room_id: roomId,
                 question_number: questionNumber,
                 is_correct: true,
             },
-            orderBy: {
-                elapsed_time_ms: 'asc',
-            },
+            orderBy: [
+                { elapsed_time_ms: 'asc' },
+            ],
         });
 
-        // 得点テーブルを取得
-        const scoreTable = room.score_table as any;
-        const scores = Array.isArray(scoreTable) ? scoreTable : [50, 40, 30, 20, 10];
-
-        // 各解答に得点を付与（Q0以外の場合）
+        // 順位に応じて得点を付与
         if (questionNumber !== 0) {
-            const updatePromises = correctAnswers.map((answer, index) => {
-                const score = index < scores.length ? scores[index] : 0;
-                return db.answer.update({
-                    where: { id: answer.id },
+            for (let rank = 0; rank < correctAnswers.length; rank++) {
+                const ans = correctAnswers[rank];
+                const score = scoreTable[rank] || 0;
+
+                await db.answer.update({
+                    where: { id: ans.id },
                     data: { score },
                 });
-            });
-
-            await Promise.all(updatePromises);
-        } else {
-            // Q0の場合はスコアを0で維持
-            const updatePromises = correctAnswers.map((answer) => {
-                return db.answer.update({
-                    where: { id: answer.id },
-                    data: { score: 0 },
-                });
-            });
-            await Promise.all(updatePromises);
+            }
         }
 
-        // 問題を確定済みに設定
-        const now = new Date();
-        const updatedQuestion = await db.question.update({
-            where: { id: question.id },
-            data: {
-                is_finalized: true,
-                finalized_at: now,
-            },
-        });
-
-        // Pusherで通知
+        // Pusherで通知（再計算が行われたことを通知）
         try {
             const { pusherServer } = await import('@/lib/pusher-server');
-            await pusherServer.trigger(`room-${resolvedRoomId}`, 'question-finalized', {
+            await pusherServer.trigger(`room-${roomId}`, 'answer-updated', {
                 questionNumber,
-                finalizedAt: now.toISOString(),
+                recalculated: true
             });
         } catch (pusherError) {
             console.error('Pusher trigger error:', pusherError);
@@ -136,12 +111,11 @@ export async function POST(
 
         return NextResponse.json({
             success: true,
-            question_number: questionNumber,
-            correct_answers_count: correctAnswers.length,
-            finalized_at: now.toISOString(),
+            message: 'ポイントマップを適用しました',
+            recalculated_count: correctAnswers.length
         });
     } catch (error) {
-        console.error('Finalize question error:', error);
+        console.error('Apply point map error:', error);
         return NextResponse.json(
             { error: '内部サーバーエラー' },
             { status: 500 }

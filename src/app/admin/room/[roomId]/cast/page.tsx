@@ -57,7 +57,7 @@ export default function CastPage() {
         const { type, data } = event.data;
 
         if (type === 'cast-correct-answers') {
-          // 正解者情報を受信して追加（既存の解答と統合し、経過時間順にソート）
+          // 正解者情報を受信して追加（既存の解答と統合し、解答時間順にソート）
           const { question_number, answers: newAnswers } = data;
           setCurrentQuestion(question_number);
 
@@ -67,7 +67,7 @@ export default function CastPage() {
             const uniqueNewAnswers = newAnswers.filter((a: CastAnswer) => !existingIds.has(a.id));
             const combined = [...prev, ...uniqueNewAnswers];
 
-            // 経過時間順にソートして順位を再計算
+            // 解答時間順にソートして順位を再計算
             const sorted = combined.sort((a, b) => (a.elapsed_time_ms || 0) - (b.elapsed_time_ms || 0));
             return sorted.map((ans, index) => ({ ...ans, rank: index + 1 }));
           });
@@ -108,7 +108,7 @@ export default function CastPage() {
         <header className="flex justify-between items-end mb-6 border-b border-white/20 pb-4">
           <div>
             <h1 className="text-5xl font-bold tracking-tight uppercase">
-              解答ランキング
+              解答スピードランキング
             </h1>
             <p className="text-sm font-medium text-neutral-500 mt-1 tracking-wider uppercase">
               Speed Ranking • Room {roomCode}
@@ -117,7 +117,7 @@ export default function CastPage() {
           <div className="flex items-center gap-4">
             {currentQuestion !== null && (
               <div className="bg-yellow-400 text-black px-6 py-2 rounded-lg font-black text-2xl shadow-xl">
-                問題 {currentQuestion === 0 ? '0 (テスト)' : currentQuestion}
+                問題 {currentQuestion === 0 ? 'テスト' : currentQuestion}
               </div>
             )}
           </div>
@@ -130,7 +130,7 @@ export default function CastPage() {
               {answers.map((answer, index) => (
                 <div
                   key={answer.id}
-                  className={`flex items-center rounded-xl transition-all duration-300 ${index === 0
+                  className={`flex items-center rounded-xl transition-all duration-300 ${(answer.elapsed_time_ms === answers[0].elapsed_time_ms && answer.elapsed_time_ms > 0)
                     ? 'bg-gradient-to-r from-yellow-400/20 to-transparent border border-yellow-400/50'
                     : 'bg-white/5 border border-white/10'
                     }`}
@@ -138,8 +138,12 @@ export default function CastPage() {
                   <div className="w-full flex items-center p-3 gap-4">
                     {/* Rank Badge */}
                     <div className="w-16 h-16 flex-shrink-0 flex items-center justify-center border-r border-white/10">
-                      <span className={`text-4xl font-black ${index === 0 ? 'text-yellow-400' : index === 1 ? 'text-neutral-300' : index === 2 ? 'text-orange-400' : 'text-neutral-600'}`}>
-                        {answer.rank}
+                      <span className={`text-4xl font-black font-number ${(index === 0 || answer.elapsed_time_ms === answers[0].elapsed_time_ms) ? 'text-yellow-400' :
+                        (index > 0 && answers[index].elapsed_time_ms === answers[1]?.elapsed_time_ms) ? 'text-neutral-300' :
+                          (index > 0 && answers[index].elapsed_time_ms === answers[2]?.elapsed_time_ms) ? 'text-orange-400' :
+                            'text-neutral-600'
+                        }`}>
+                        {(answers.findIndex(a => a.elapsed_time_ms === answer.elapsed_time_ms) + 1).toLocaleString()}
                       </span>
                     </div>
 
@@ -168,18 +172,18 @@ export default function CastPage() {
 
                     {/* Speed & Score */}
                     <div className="text-right px-4 flex items-center gap-6">
-                      <div className="border-l border-white/10 pl-6">
-                        <div className="text-[10px] font-bold text-neutral-500 mb-0.5 uppercase tracking-widest">Speed</div>
-                        <div className="text-2xl font-mono font-bold text-white">
+                      <div className="border-l border-white/10 pl-6 min-w-[120px]">
+                        <div className="text-[12px] font-bold text-neutral-500 mb-1 uppercase tracking-widest">Speed</div>
+                        <div className="text-4xl font-bold text-white font-number">
                           {formatTime(answer.elapsed_time_ms)}
                         </div>
                       </div>
                       {/* テスト問題(問題0)の場合はポイントを表示しない */}
                       {answer.question_number !== 0 && (
-                        <div className="border-l border-white/10 pl-6 min-w-[80px]">
-                          <div className="text-[10px] font-bold text-neutral-500 mb-0.5 uppercase tracking-widest">Points</div>
-                          <div className="text-2xl font-black text-yellow-400">
-                            +{answer.score}
+                        <div className="border-l border-white/10 pl-6 min-w-[200px] text-right">
+                          <div className="text-[12px] font-bold text-neutral-500 mb-1 uppercase tracking-widest">Points</div>
+                          <div className="text-5xl font-black text-yellow-400 font-number">
+                            +{answer.score.toLocaleString()}
                           </div>
                         </div>
                       )}

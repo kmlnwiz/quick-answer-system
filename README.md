@@ -87,13 +87,13 @@ SESSION_SECRET="your_session_secret_32chars_or_more"
 | `ADMIN_PASSWORD`             | 管理者ログイン用パスワード        | 任意の安全なパスワード（例: `admin123`）                 |
 | `SESSION_SECRET`             | セッション暗号化キー              | 32 文字以上のランダム文字列                              |
 
-**開発環境での簡易設定例:**
+**開発環境での簡易設定例（※これらは仮の値です。実際のキーに置き換えてください）:**
 
 ```env
 DATABASE_URL="postgresql://postgres:postgres@localhost:5432/quiz_dev"
-PUSHER_APP_ID="12345"
-PUSHER_SECRET="abcdef123456"
-NEXT_PUBLIC_PUSHER_KEY="xyz789"
+PUSHER_APP_ID="12345" # <-- 実際のApp IDに書き換えてください
+PUSHER_SECRET="abcdef123456" # <-- 実際のSecretに書き換えてください
+NEXT_PUBLIC_PUSHER_KEY="xyz789" # <-- 実際のKeyに書き換えてください
 NEXT_PUBLIC_PUSHER_CLUSTER="ap3"
 ADMIN_PASSWORD="admin123"
 SESSION_SECRET="development_secret_key_32_chars_minimum_length"

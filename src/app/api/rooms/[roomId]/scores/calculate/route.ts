@@ -70,7 +70,7 @@ export async function POST(
         data: { score: 0 },
       });
 
-      // 正解の解答を経過時間順に取得
+      // 正解の解答を解答時間順に取得
       const correctAnswers = await prisma.answer.findMany({
         where: {
           room_id: roomId,
@@ -78,7 +78,7 @@ export async function POST(
           is_correct: true,
         },
         orderBy: [
-          { elapsed_time_ms: 'asc' }, // 経過時間が短い順
+          { elapsed_time_ms: 'asc' }, // 解答時間が短い順
         ],
         include: {
           user: {

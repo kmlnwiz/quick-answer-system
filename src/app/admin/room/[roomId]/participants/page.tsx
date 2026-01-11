@@ -101,8 +101,8 @@ export default function ParticipantsProjectionPage() {
           </div>
           <div className="text-right flex flex-col items-end">
             <div className="text-sm font-bold text-neutral-500 mb-1 uppercase tracking-widest">Total members</div>
-            <div className="text-6xl font-black text-white flex items-baseline leading-none">
-              {users.length}
+            <div className="text-6xl font-black text-white flex items-baseline leading-none font-number">
+              {users.length.toLocaleString()}
             </div>
           </div>
         </header>
@@ -127,7 +127,7 @@ export default function ParticipantsProjectionPage() {
                         {group.teamName}
                       </h2>
                     </div>
-                    <div className="text-lg font-bold text-white/30 font-mono">
+                    <div className="text-lg font-bold text-white/30 font-number">
                       {group.users.length}
                     </div>
                   </div>

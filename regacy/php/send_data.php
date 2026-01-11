@@ -23,7 +23,7 @@ if ($start_time) {
     // 基準時間($start_time)をタイムスタンプに変換
     $start_timestamp = strtotime($start_time); // 基準時間をUnixタイムスタンプに変換
 
-    // 経過時間を計算（秒単位）
+    // 解答時間を計算（秒単位）
     $speed = $microtime - $start_timestamp;
     $speed = floor($speed * 1000) / 1000;
 

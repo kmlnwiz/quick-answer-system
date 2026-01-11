@@ -64,6 +64,7 @@ export default function QuestionControlPage() {
   const [correctAnswer, setCorrectAnswer] = useState('');
   const [choices, setChoices] = useState<string[]>(['', '', '', '']);
   const [allowResubmission, setAllowResubmission] = useState<boolean | null>(null);
+  const [manualStartTime, setManualStartTime] = useState(''); // "1:30" or "90" (seconds or mm:ss)
 
   // データを一括取得
   useEffect(() => {
@@ -164,19 +165,47 @@ export default function QuestionControlPage() {
     }
   };
 
+  // 手動入力を Date に変換する関数
+  const parseManualTime = (input: string) => {
+    if (!input.trim()) return null;
+
+    // "mm:ss" 形式または "ss" 形式を想定
+    let seconds = 0;
+    if (input.includes(':')) {
+      const [m, s] = input.split(':').map(Number);
+      if (!isNaN(m) && !isNaN(s)) {
+        seconds = m * 60 + s;
+      }
+    } else {
+      seconds = Number(input);
+    }
+
+    if (isNaN(seconds)) return null;
+
+    // 現在時刻から秒数を引いた時刻を計算（例: 30秒前を開始時間とする）
+    const date = new Date();
+    date.setSeconds(date.getSeconds() - seconds);
+    return date.toISOString();
+  };
+
   // 全体開始ボタン
   const handleGlobalStart = async () => {
-    if (!confirm(`問題${selectedQuestion}を全体開始しますか？`)) return;
+    const isOverwriting = !!currentStartInfo?.global_start_time;
+    if (!confirm(`問題${selectedQuestion}を${isOverwriting ? '上書きして' : ''}全体開始しますか？`)) return;
 
     try {
       const token = localStorage.getItem('admin_token');
+      const startTime = parseManualTime(manualStartTime);
+
       const res = await fetch(
         `/api/rooms/${roomId}/questions/${selectedQuestion}/start`,
         {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${token}`
-          }
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ start_time: startTime })
         }
       );
 
@@ -186,6 +215,7 @@ export default function QuestionControlPage() {
       }
 
       alert('全体開始しました');
+      setManualStartTime(''); // 送信後クリア
       fetchAllStartTimes(); // リロードの代わりに情報を再取得
     } catch (err: any) {
       alert(err.message);
@@ -194,11 +224,14 @@ export default function QuestionControlPage() {
 
   // チーム別開始ボタン
   const handleTeamStart = async (teamId: number, teamName: string) => {
-    if (!confirm(`問題${selectedQuestion}を${teamName}のみ開始しますか？`))
+    const existingTeamStart = currentStartInfo?.team_starts.find(ts => ts.team_id === teamId);
+    if (!confirm(`問題${selectedQuestion}を${existingTeamStart ? '上書きして' : ''}${teamName}のみ開始しますか？`))
       return;
 
     try {
       const token = localStorage.getItem('admin_token');
+      const startTime = parseManualTime(manualStartTime);
+
       const res = await fetch(
         `/api/rooms/${roomId}/questions/${selectedQuestion}/start-team`,
         {
@@ -207,7 +240,10 @@ export default function QuestionControlPage() {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${token}`
           },
-          body: JSON.stringify({ team_id: teamId }),
+          body: JSON.stringify({
+            team_id: teamId,
+            start_time: startTime
+          }),
         }
       );
 
@@ -217,6 +253,8 @@ export default function QuestionControlPage() {
       }
 
       alert(`${teamName}の開始合図を送りました`);
+      // チーム開始後もクリアするかは好みだが、一応クリアする
+      setManualStartTime('');
       fetchAllStartTimes(); // リロードの代わりに情報を再取得
     } catch (err: any) {
       alert(err.message);
@@ -309,7 +347,6 @@ export default function QuestionControlPage() {
             <p className="text-neutral-700">
               部屋コード: <span className="font-bold text-neutral-900">{room.room_code}</span>
             </p>
-            <p className="text-neutral-700">問題数: {room.total_questions}</p>
           </div>
         )}
 
@@ -457,7 +494,7 @@ export default function QuestionControlPage() {
               <h3 className="font-semibold text-neutral-900 mb-2">全体開始時刻</h3>
               <p>
                 {currentStartInfo.global_start_time ? (
-                  <span className="inline-block px-3 py-1.5 rounded-md text-sm font-medium bg-green-100 text-green-700">
+                  <span className="inline-block px-3 py-1.5 rounded-md text-sm font-medium bg-green-100 text-green-700 font-number">
                     {formatDateTime(currentStartInfo.global_start_time)}
                   </span>
                 ) : (
@@ -483,7 +520,7 @@ export default function QuestionControlPage() {
                       </span>
                       <span>
                         {teamStart ? (
-                          <span className="inline-block px-2.5 py-1 rounded-md text-xs font-medium bg-green-100 text-green-700">
+                          <span className="inline-block px-2.5 py-1 rounded-md text-xs font-medium bg-green-100 text-green-700 font-number">
                             {formatDateTime(teamStart.start_time)}
                           </span>
                         ) : (
@@ -501,6 +538,30 @@ export default function QuestionControlPage() {
         {/* 操作パネル */}
         <div className="bg-white border border-neutral-200 rounded-xl p-6">
           <h2 className="text-lg font-bold text-neutral-900 mb-6">操作</h2>
+
+          <div className="mb-8 p-4 bg-orange-50 border border-orange-200 rounded-lg">
+            <label className="block text-sm font-bold text-orange-800 mb-2">
+              手動開始時間オフセット (任意)
+            </label>
+            <div className="flex gap-2 items-center">
+              <input
+                type="text"
+                placeholder="例: 1:30 または 90"
+                value={manualStartTime}
+                onChange={(e) => setManualStartTime(e.target.value)}
+                className="flex-1 px-4 py-2 bg-white border border-orange-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500"
+              />
+              <button
+                onClick={() => setManualStartTime('')}
+                className="px-3 py-2 text-xs font-medium text-orange-700 hover:text-orange-900"
+              >
+                クリア
+              </button>
+            </div>
+            <p className="text-[11px] text-orange-700 mt-2">
+              ※ 入力すると「現在時刻からこの秒数遡った時間」を開始時間に設定します。空欄の場合は「今この瞬間」が開始時間になります。
+            </p>
+          </div>
 
           <div className="mb-6">
             <h3 className="font-semibold text-neutral-900 mb-3">全体開始</h3>

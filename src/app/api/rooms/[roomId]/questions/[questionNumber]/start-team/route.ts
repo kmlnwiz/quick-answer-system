@@ -26,7 +26,8 @@ export async function POST(
       return NextResponse.json({ error: '管理者権限が必要です' }, { status: 403 });
     }
 
-    const { team_id } = await request.json();
+    const body = await request.json().catch(() => ({}));
+    const { team_id, start_time } = body;
     if (!team_id) {
       return NextResponse.json({ error: 'チームIDが必要です' }, { status: 400 });
     }
@@ -104,7 +105,8 @@ export async function POST(
       );
     }
 
-    // 既にチーム別開始されているかチェック
+    // すでに開始されているかに関わらず、上書きとして扱う
+    // upsertは複合ユニークキーが必要だが、ここではfindFirst + update/createで行う
     const existingStart = await db.questionTeamStart.findFirst({
       where: {
         question_id: question.id,
@@ -112,25 +114,31 @@ export async function POST(
       },
     });
 
-    if (existingStart) {
-      return NextResponse.json(
-        { error: 'このチームは既に開始されています', teamStart: existingStart },
-        { status: 400 }
-      );
-    }
+    let teamStart;
+    const finalStartTime = start_time ? new Date(start_time) : new Date();
 
-    // チーム別開始時刻を記録
-    const teamStart = await db.questionTeamStart.create({
-      data: {
-        question_id: question.id,
-        team_id: team_id,
-        start_time: new Date(),
-      },
-      include: {
-        team: true,
-        question: true,
-      },
-    });
+    if (existingStart) {
+      teamStart = await db.questionTeamStart.update({
+        where: { id: existingStart.id },
+        data: { start_time: finalStartTime },
+        include: {
+          team: true,
+          question: true,
+        },
+      });
+    } else {
+      teamStart = await db.questionTeamStart.create({
+        data: {
+          question_id: question.id,
+          team_id: team_id,
+          start_time: finalStartTime,
+        },
+        include: {
+          team: true,
+          question: true,
+        },
+      });
+    }
 
     // Pusherで通知
     try {

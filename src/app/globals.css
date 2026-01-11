@@ -3,8 +3,26 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --font-sans: 'Outfit', 'Inter', system-ui, -apple-system, sans-serif;
+    --font-number: 'Oswald', 'JetBrains Mono', monospace;
+    --font-accent: 'Damion', cursive;
+  }
+
   body {
     @apply bg-neutral-50 text-neutral-900;
+    font-family: var(--font-sans);
+  }
+}
+
+@layer utilities {
+  .font-number {
+    font-family: var(--font-number);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+  }
+  .font-accent {
+    font-family: var(--font-accent);
   }
 }
 
@@ -14,21 +32,15 @@
   }
 
   .stylish-input {
-    @apply w-full px-4 py-3 bg-white border border-neutral-300 rounded-lg
-           focus:outline-none focus:ring-2 focus:ring-neutral-900 focus:border-transparent
-           transition-all duration-200;
+    @apply w-full px-4 py-3 bg-white border border-neutral-300 rounded-lg focus: outline-none focus:ring-2 focus:ring-neutral-900 focus:border-transparent transition-all duration-200;
   }
 
   .stylish-button {
-    @apply px-6 py-3 bg-neutral-900 text-white rounded-lg font-medium
-           hover:bg-neutral-800 active:scale-95
-           transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply px-6 py-3 bg-neutral-900 text-white rounded-lg font-medium hover: bg-neutral-800 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed;
   }
 
   .stylish-button-outline {
-    @apply px-6 py-3 bg-transparent text-neutral-900 border border-neutral-900 rounded-lg font-medium
-           hover:bg-neutral-900 hover:text-white active:scale-95
-           transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply px-6 py-3 bg-transparent text-neutral-900 border border-neutral-900 rounded-lg font-medium hover: bg-neutral-900 hover:text-white active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed;
   }
 
   .stylish-panel {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 
@@ -29,8 +29,12 @@ export default function IndividualScoresPage() {
     const [userScores, setUserScores] = useState<UserScore[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
+    const fetchingRef = useRef(false);
+    const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
     const fetchScores = async () => {
+        if (fetchingRef.current) return;
+        fetchingRef.current = true;
         try {
             const res = await fetch(`/api/rooms/${roomId}/scores`);
             if (!res.ok) throw new Error('得点の取得に失敗しました');
@@ -42,16 +46,61 @@ export default function IndividualScoresPage() {
             setError(err.message);
         } finally {
             setLoading(false);
+            fetchingRef.current = false;
         }
+    };
+
+    const debouncedFetchScores = () => {
+        if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = setTimeout(fetchScores, 1000);
     };
 
     useEffect(() => {
         if (!roomId) return;
         fetchScores();
 
-        // 定期的な自動更新 (5秒おき)
-        const interval = setInterval(fetchScores, 5000);
-        return () => clearInterval(interval);
+        // Pusherのセットアップ
+        let channel: any;
+        let dbRoomId: number | null = null;
+
+        const setupPusher = async () => {
+            try {
+                const { pusherClient } = await import('@/lib/pusher-client');
+
+                // 部屋情報を取得してIDを特定
+                const res = await fetch(`/api/rooms/${roomId}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    dbRoomId = data.room.id;
+
+                    channel = pusherClient.subscribe(`room-${dbRoomId}`);
+
+                    const handleUpdate = () => {
+                        console.log('Real-time score update received');
+                        debouncedFetchScores();
+                    };
+
+                    channel.bind('answer-updated', handleUpdate);
+                    channel.bind('answer-deleted', handleUpdate);
+                    channel.bind('question-finalized', handleUpdate);
+                    channel.bind('answer-submitted', handleUpdate);
+                }
+            } catch (err) {
+                console.error('Pusher setup error:', err);
+            }
+        };
+
+        setupPusher();
+
+        // 定期的な自動更新 (30秒おき) - バックアップ
+        const interval = setInterval(fetchScores, 30000);
+        return () => {
+            clearInterval(interval);
+            if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+            if (channel && dbRoomId) {
+                channel.unbind_all();
+            }
+        };
     }, [roomId]);
 
     if (loading) {
@@ -87,15 +136,17 @@ export default function IndividualScoresPage() {
                         <div className="flex gap-4 mt-6">
                             <Link
                                 href={`/admin/room/${roomId}/scores`}
-                                className="px-6 py-3 bg-white/10 text-white rounded-xl font-bold border border-white/20 hover:bg-white/20 transition-all"
+                                target="_blank"
+                                className="px-6 py-3 bg-white/10 text-white rounded-xl font-bold border border-white/20 hover:bg-white/20 transition-all text-sm uppercase tracking-widest"
                             >
-                                TEAM
+                                チーム得点
                             </Link>
                             <Link
                                 href={`/admin/room/${roomId}/individual-scores`}
-                                className="px-6 py-3 bg-yellow-400 text-black rounded-xl font-bold border border-yellow-400/50 hover:bg-yellow-500 transition-all shadow-[0_0_20px_rgba(250,204,21,0.2)]"
+                                target="_blank"
+                                className="px-6 py-3 bg-white/10 text-white rounded-xl font-bold border border-white/20 hover:bg-white/20 transition-all text-sm uppercase tracking-widest"
                             >
-                                INDIVIDUAL
+                                個人得点
                             </Link>
                         </div>
                     </div>
@@ -112,17 +163,19 @@ export default function IndividualScoresPage() {
                     {userScores.map((user, index) => (
                         <div
                             key={user.user_id}
-                            className={`flex items-center rounded-2xl transition-all duration-300 ${index === 0
+                            className={`flex items-center rounded-2xl transition-all duration-300 ${(user.total_score === userScores[0].total_score && user.correct_count === userScores[0].correct_count && user.total_score > 0)
                                 ? 'bg-gradient-to-r from-yellow-400/20 to-transparent border border-yellow-400/50 shadow-[0_0_40px_rgba(250,204,21,0.1)]'
                                 : 'bg-white/5 border border-white/10'
                                 }`}
                         >
                             <div className="w-full flex items-center p-6 gap-8">
-                                {/* Rank Number */}
                                 <div className="w-24 flex-shrink-0 flex items-center justify-center border-r border-white/10">
-                                    <span className={`text-6xl font-black ${index === 0 ? 'text-yellow-400' : index === 1 ? 'text-neutral-300' : index === 2 ? 'text-orange-400' : 'text-neutral-600'
+                                    <span className={`text-6xl font-black font-number ${(index === 0 || (user.total_score === userScores[0].total_score && user.correct_count === userScores[0].correct_count)) ? 'text-yellow-400' :
+                                        (index > 0 && userScores[index].total_score === userScores[1]?.total_score && userScores[index].correct_count === userScores[1]?.correct_count) ? 'text-neutral-300' :
+                                            (index > 0 && userScores[index].total_score === userScores[2]?.total_score && userScores[index].correct_count === userScores[2]?.correct_count) ? 'text-orange-400' :
+                                                'text-neutral-600'
                                         }`}>
-                                        {index + 1}
+                                        {(userScores.findIndex(u => u.total_score === user.total_score && u.correct_count === user.correct_count) + 1).toLocaleString()}
                                     </span>
                                 </div>
 
@@ -148,13 +201,13 @@ export default function IndividualScoresPage() {
                                 <div className="flex items-center gap-12 text-right">
                                     <div className="px-6 border-l border-white/10">
                                         <div className="text-xs font-bold text-neutral-500 mb-1 uppercase tracking-widest">Correct</div>
-                                        <div className="text-3xl font-bold">{user.correct_count}</div>
+                                        <div className="text-3xl font-bold font-number">{user.correct_count}</div>
                                     </div>
-                                    <div className="px-6 border-l border-white/10">
+                                    <div className="px-6 border-l border-white/10 min-w-[240px] text-right">
                                         <div className="text-xs font-bold text-neutral-500 mb-1 uppercase tracking-widest">Total Pts</div>
-                                        <div className="text-5xl font-black text-white flex items-baseline">
-                                            {user.total_score}
-                                            <span className="text-lg ml-2 font-bold text-neutral-500 uppercase">pt</span>
+                                        <div className="text-6xl font-black text-yellow-500 flex items-baseline justify-end font-number tracking-normal">
+                                            {user.total_score.toLocaleString()}
+                                            <span className="text-2xl ml-2 font-bold text-neutral-500 uppercase font-sans">pt</span>
                                         </div>
                                     </div>
                                 </div>

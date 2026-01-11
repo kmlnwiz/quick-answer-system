@@ -167,7 +167,7 @@ CREATE TABLE answers (
   question_number INTEGER NOT NULL,
   answer_text TEXT NOT NULL,
   submitted_at TIMESTAMP DEFAULT NOW(),
-  elapsed_time_ms BIGINT,  -- 問題開始からの経過時間（ミリ秒）
+  elapsed_time_ms BIGINT,  -- 問題開始からの解答時間（ミリ秒）
   submission_date DATE DEFAULT CURRENT_DATE,  -- 午前0時リセット用
   is_correct BOOLEAN DEFAULT NULL,  -- 正解判定（NULL=未判定、TRUE=正解、FALSE=不正解）
   score INTEGER DEFAULT 0,  -- この解答で獲得した得点
@@ -335,14 +335,14 @@ async function startQuestionForTeam(questionId: number, teamId: number) {
 }
 ```
 
-### 2. 解答送信時の経過時間計算
+### 2. 解答送信時の解答時間計算
 
-**重要**: 経過時間の計算終点は、ユーザーがボタンを押してサーバーが受け付けた瞬間です。
+**重要**: 解答時間の計算終点は、ユーザーがボタンを押してサーバーが受け付けた瞬間です。
 クライアント側でボタン押下時刻を送信するのではなく、サーバー側で受信時刻を記録します。
 これにより、ネットワークの応答時間による不公平を回避します。
 
 ```typescript
-// 解答送信時に経過時間を計算（サーバー受付時点で計算）
+// 解答送信時に解答時間を計算（サーバー受付時点で計算）
 async function submitAnswer(
   userId: number,
   questionNumber: number,
@@ -370,7 +370,7 @@ async function submitAnswer(
     throw new Error("問題がまだ開始されていません");
   }
 
-  // 経過時間をミリ秒で計算（開始時刻 → サーバー受付時刻）
+  // 解答時間をミリ秒で計算（開始時刻 → サーバー受付時刻）
   const elapsedMs = receivedAt.getTime() - startTime.getTime();
 
   // 解答を保存
@@ -381,7 +381,7 @@ async function submitAnswer(
       question_number: questionNumber,
       answer_text: answerText,
       submitted_at: receivedAt, // サーバー受付時刻
-      elapsed_time_ms: elapsedMs, // 開始からの経過時間（ミリ秒）
+      elapsed_time_ms: elapsedMs, // 開始からの解答時間（ミリ秒）
     },
   });
 
@@ -433,14 +433,14 @@ async function markAnswer(answerId: number, isCorrect: boolean) {
 ```typescript
 // 問題ごとの正解者に得点を付与
 async function recalculateScores(roomId: number, questionNumber: number) {
-  // 1. 正解とマークされた解答を取得（経過時間順）
+  // 1. 正解とマークされた解答を取得（解答時間順）
   const correctAnswers = await db.answers.findMany({
     where: {
       room_id: roomId,
       question_number: questionNumber,
       is_correct: true, // 正解のみ
     },
-    orderBy: { elapsed_time_ms: "asc" }, // 経過時間が短い順
+    orderBy: { elapsed_time_ms: "asc" }, // 解答時間が短い順
     include: { user: { include: { team: true } } },
   });
 
@@ -783,11 +783,11 @@ SESSION_SECRET="your_session_secret"
    - チーム別開始時刻がない場合は全体開始時刻を参照
    - Pusher でリアルタイム通知
 
-3. **経過時間の計測**
+3. **解答時間の計測**
 
-   - 開始時刻からサーバー受付時刻までの経過時間をミリ秒単位で計算
+   - 開始時刻からサーバー受付時刻までの解答時間をミリ秒単位で計算
    - ネットワーク遅延の影響を最小化（サーバー側で受付時刻を記録）
-   - 経過時間で早い順にソート
+   - 解答時間で早い順にソート
 
 4. **正解判定システム**
 
@@ -854,4 +854,4 @@ SESSION_SECRET="your_session_secret"
 #### ライブラリ
 
 - [src/lib/auth.ts](src/lib/auth.ts) - セッション管理ヘルパー
-- [src/lib/time-calculator.ts](src/lib/time-calculator.ts) - 経過時間計算ロジック
+- [src/lib/time-calculator.ts](src/lib/time-calculator.ts) - 解答時間計算ロジック

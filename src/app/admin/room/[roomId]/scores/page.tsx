@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 
@@ -26,8 +26,12 @@ export default function ScoresProjectionPage() {
   const [teamScores, setTeamScores] = useState<TeamScore[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const fetchingRef = useRef(false);
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const fetchScores = async () => {
+    if (fetchingRef.current) return;
+    fetchingRef.current = true;
     try {
       const res = await fetch(`/api/rooms/${roomId}/scores`);
       if (!res.ok) throw new Error('得点の取得に失敗しました');
@@ -39,16 +43,61 @@ export default function ScoresProjectionPage() {
       setError(err.message);
     } finally {
       setLoading(false);
+      fetchingRef.current = false;
     }
+  };
+
+  const debouncedFetchScores = () => {
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    debounceTimerRef.current = setTimeout(fetchScores, 1000);
   };
 
   useEffect(() => {
     if (!roomId) return;
     fetchScores();
 
-    // 定期的な自動更新 (5秒おき)
-    const interval = setInterval(fetchScores, 5000);
-    return () => clearInterval(interval);
+    // Pusherのセットアップ
+    let channel: any;
+    let dbRoomId: number | null = null;
+
+    const setupPusher = async () => {
+      try {
+        const { pusherClient } = await import('@/lib/pusher-client');
+
+        // 部屋情報を取得してIDを特定
+        const res = await fetch(`/api/rooms/${roomId}`);
+        if (res.ok) {
+          const data = await res.json();
+          dbRoomId = data.room.id;
+
+          channel = pusherClient.subscribe(`room-${dbRoomId}`);
+
+          const handleUpdate = () => {
+            console.log('Real-time update received');
+            debouncedFetchScores();
+          };
+
+          channel.bind('answer-updated', handleUpdate);
+          channel.bind('answer-deleted', handleUpdate);
+          channel.bind('question-finalized', handleUpdate);
+          channel.bind('answer-submitted', handleUpdate);
+        }
+      } catch (err) {
+        console.error('Pusher setup error:', err);
+      }
+    };
+
+    setupPusher();
+
+    // 定期的な自動更新 (30秒おき) - バックアップ
+    const interval = setInterval(fetchScores, 30000);
+    return () => {
+      clearInterval(interval);
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      if (channel && dbRoomId) {
+        channel.unbind_all();
+      }
+    };
   }, [roomId]);
 
   if (loading) {
@@ -84,15 +133,17 @@ export default function ScoresProjectionPage() {
             <div className="flex gap-4 mt-6">
               <Link
                 href={`/admin/room/${roomId}/scores`}
-                className="px-6 py-3 bg-white/10 text-white rounded-xl font-bold border border-white/20 hover:bg-white/20 transition-all"
+                target="_blank"
+                className="px-6 py-3 bg-white/10 text-white rounded-xl font-bold border border-white/20 hover:bg-white/20 transition-all text-sm uppercase tracking-widest"
               >
-                TEAM
+                チーム得点
               </Link>
               <Link
                 href={`/admin/room/${roomId}/individual-scores`}
-                className="px-6 py-3 bg-yellow-400 text-black rounded-xl font-bold border border-yellow-400/50 hover:bg-yellow-500 transition-all shadow-[0_0_20px_rgba(250,204,21,0.2)]"
+                target="_blank"
+                className="px-6 py-3 bg-white/10 text-white rounded-xl font-bold border border-white/20 hover:bg-white/20 transition-all text-sm uppercase tracking-widest"
               >
-                INDIVIDUAL
+                個人得点
               </Link>
             </div>
           </div>
@@ -109,17 +160,19 @@ export default function ScoresProjectionPage() {
           {teamScores.map((team, index) => (
             <div
               key={team.team_id}
-              className={`flex items-center rounded-2xl transition-all duration-300 ${index === 0
+              className={`flex items-center rounded-2xl transition-all duration-300 ${(team.total_score === teamScores[0].total_score && team.correct_count === teamScores[0].correct_count && team.total_score > 0)
                 ? 'bg-gradient-to-r from-yellow-400/20 to-transparent border border-yellow-400/50 shadow-[0_0_40px_rgba(250,204,21,0.1)]'
                 : 'bg-white/5 border border-white/10'
                 }`}
             >
               <div className="w-full flex items-center p-6 gap-8">
-                {/* Rank Number */}
                 <div className="w-24 flex-shrink-0 flex items-center justify-center border-r border-white/10">
-                  <span className={`text-6xl font-black ${index === 0 ? 'text-yellow-400' : index === 1 ? 'text-neutral-300' : index === 2 ? 'text-orange-400' : 'text-neutral-600'
+                  <span className={`text-6xl font-black font-number ${(index === 0 || team.total_score === teamScores[0].total_score && team.correct_count === teamScores[0].correct_count) ? 'text-yellow-400' :
+                    (index > 0 && teamScores[index].total_score === teamScores[1]?.total_score && teamScores[index].correct_count === teamScores[1]?.correct_count) ? 'text-neutral-300' :
+                      (index > 0 && teamScores[index].total_score === teamScores[2]?.total_score && teamScores[index].correct_count === teamScores[2]?.correct_count) ? 'text-orange-400' :
+                        'text-neutral-600'
                     }`}>
-                    {index + 1}
+                    {(teamScores.findIndex(t => t.total_score === team.total_score && t.correct_count === team.correct_count) + 1).toLocaleString()}
                   </span>
                 </div>
 
@@ -140,13 +193,13 @@ export default function ScoresProjectionPage() {
                 <div className="flex items-center gap-12 text-right">
                   <div className="px-6 border-l border-white/10">
                     <div className="text-xs font-bold text-neutral-500 mb-1 uppercase tracking-widest">Correct</div>
-                    <div className="text-3xl font-bold">{team.correct_count}</div>
+                    <div className="text-3xl font-bold font-number">{team.correct_count}</div>
                   </div>
-                  <div className="px-6 border-l border-white/10">
+                  <div className="px-6 border-l border-white/10 min-w-[240px] text-right">
                     <div className="text-xs font-bold text-neutral-500 mb-1 uppercase tracking-widest">Total Pts</div>
-                    <div className="text-5xl font-black text-white flex items-baseline">
-                      {team.total_score}
-                      <span className="text-lg ml-2 font-bold text-neutral-500 uppercase">pt</span>
+                    <div className="text-6xl font-black text-yellow-500 flex items-baseline justify-end font-number tracking-normal">
+                      {team.total_score.toLocaleString()}
+                      <span className="text-2xl ml-2 font-bold text-neutral-500 uppercase font-sans">pt</span>
                     </div>
                   </div>
                 </div>

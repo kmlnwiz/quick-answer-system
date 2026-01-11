@@ -96,19 +96,14 @@ export async function POST(
       );
     }
 
-    // 既に開始されているかチェック
-    if (question.global_start_time) {
-      return NextResponse.json(
-        { error: 'この問題は既に開始されています', question },
-        { status: 400 }
-      );
-    }
+    const body = await request.json().catch(() => ({}));
+    const { start_time } = body;
 
-    // 問題を開始
+    // 問題を開始 (上書きを許可するために既に開始されているかのチェックは削除)
     const updatedQuestion = await db.question.update({
       where: { id: question.id },
       data: {
-        global_start_time: new Date(),
+        global_start_time: start_time ? new Date(start_time) : new Date(),
       },
     });
 

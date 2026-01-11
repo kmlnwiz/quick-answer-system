@@ -77,6 +77,18 @@ export default function AnswersPage() {
   const bcRef = useRef<BroadcastChannel | null>(null);
   const [selectedAnswers, setSelectedAnswers] = useState<Set<number>>(new Set());
 
+  // フィルターの値を最新状態で参照するためのRef
+  const filterQuestionRef = useRef<number | null>(null);
+  const filterTeamRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    filterQuestionRef.current = filterQuestion;
+  }, [filterQuestion]);
+
+  useEffect(() => {
+    filterTeamRef.current = filterTeam;
+  }, [filterTeam]);
+
   // Pusherのセットアップ（初回のみ）
   useEffect(() => {
     const token = localStorage.getItem('admin_token');
@@ -86,6 +98,7 @@ export default function AnswersPage() {
     }
 
     let channel: any;
+    let adminChannel: any;
     let dbRoomId: number;
 
     const setupPusher = async () => {
@@ -97,32 +110,58 @@ export default function AnswersPage() {
           dbRoomId = data.room.id;
 
           channel = pusherClient.subscribe(`room-${dbRoomId}`);
+          adminChannel = pusherClient.subscribe(`admin-room-${dbRoomId}`);
 
-          channel.bind('new-answer', (data: { answer: Answer }) => {
+          // 管理者専用チャンネルのイベント（詳細データを含む）
+          adminChannel.bind('new-answer', (data: { answer: Answer }) => {
             console.log('新しい解答を受信:', data);
-            // リアルタイムで解答が来たら、データを再取得して最新状態を反映
-            fetchData();
+            const currentFilterQuestion = filterQuestionRef.current;
+            const currentFilterTeam = filterTeamRef.current;
+
+            const matchesQuestion = currentFilterQuestion === null || data.answer.question_number === currentFilterQuestion;
+            const matchesTeam = currentFilterTeam === null || (data.answer.user && data.answer.user.team.id === currentFilterTeam);
+
+            if (matchesQuestion && matchesTeam) {
+              setAnswers(prev => {
+                if (prev.some(ans => ans.id === data.answer.id)) return prev;
+                return [data.answer, ...prev];
+              });
+            }
           });
 
+          adminChannel.bind('answer-updated', (data: { answerId: number; questionNumber: number; updatedAnswer?: any; recalculated?: boolean }) => {
+            console.log('解答が更新されました(admin):', data);
+            if (data.updatedAnswer && !data.recalculated) {
+              setAnswers(prev => prev.map(ans =>
+                ans.id === data.answerId ? { ...ans, ...data.updatedAnswer } : ans
+              ));
+            } else {
+              fetchData();
+            }
+          });
+
+          adminChannel.bind('answer-deleted', (data: { answerId: number; questionNumber: number }) => {
+            console.log('解答が削除されました:', data);
+            setAnswers(prev => prev.filter(ans => ans.id !== data.answerId));
+          });
+
+          // 一般チャンネルのイベント
           channel.bind('new-comment', (data: { comment: Comment }) => {
             console.log('新しいコメントを受信:', data);
-            // リアルタイムでコメントが来たら、コメントを再取得
-            fetchComments();
+            setComments(prev => {
+              if (prev.some(c => c.id === data.comment.id)) return prev;
+              return [...prev, data.comment];
+            });
           });
 
-          channel.bind('answer-updated', (data: { answerId: number; questionNumber: number }) => {
-            console.log('解答が更新されました:', data);
-            // 解答の正解/不正解マークが変更されたら再取得
-            fetchData();
+          channel.bind('answer-updated', (data: { recalculated?: boolean }) => {
+            if (data.recalculated) {
+              console.log('一括再計算を受信、データを再取得します');
+              fetchData();
+            }
           });
 
-          channel.bind('answer-deleted', (data: { answerId: number; questionNumber: number }) => {
-            console.log('解答が削除されました:', data);
-            // 解答が削除されたら再取得
-            fetchData();
-          });
-
-          console.log(`Pusherチャンネル room-${dbRoomId} に接続しました`);
+          console.log(`Pusherチャンネル room-${dbRoomId} & admin-room-${dbRoomId} に接続しました`);
         }
       } catch (err) {
         console.error('Pusherセットアップエラー:', err);
@@ -143,7 +182,10 @@ export default function AnswersPage() {
       if (channel) {
         channel.unbind_all();
         pusherClient.unsubscribe(`room-${dbRoomId}`);
-        console.log(`Pusherチャンネル room-${dbRoomId} から切断しました`);
+      }
+      if (adminChannel) {
+        adminChannel.unbind_all();
+        pusherClient.unsubscribe(`admin-room-${dbRoomId}`);
       }
       if (bcRef.current) {
         bcRef.current.close();
@@ -227,9 +269,7 @@ export default function AnswersPage() {
       const response = await fetch(`/api/rooms/${roomId}/comments?limit=50`);
       if (response.ok) {
         const data = await response.json();
-        // 新しい順で来るので、表示のために反転
         setComments([...data.comments].reverse());
-        // コメント取得後、少し遅延してスクロール（DOMの更新を待つ）
         setTimeout(() => {
           if (commentsEndRef.current) {
             commentsEndRef.current.scrollIntoView({ behavior: 'smooth' });
@@ -250,12 +290,12 @@ export default function AnswersPage() {
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
+          'X-Pusher-Socket-ID': pusherClient.connection.socket_id || '',
         },
         body: JSON.stringify({ is_correct: isCorrect }),
       });
 
       if (response.ok) {
-        // 解答リストを更新
         setAnswers(
           answers.map((answer) =>
             answer.id === answerId ? { ...answer, is_correct: isCorrect } : answer
@@ -271,6 +311,36 @@ export default function AnswersPage() {
     }
   };
 
+  const handleUpdateAnswerManual = async (answerId: number, updates: { score?: number; elapsed_time_ms?: number }) => {
+    const token = localStorage.getItem('admin_token');
+
+    try {
+      const response = await fetch(`/api/rooms/${roomId}/answers/${answerId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+          'X-Pusher-Socket-ID': pusherClient.connection.socket_id || '',
+        },
+        body: JSON.stringify(updates),
+      });
+
+      if (response.ok) {
+        setAnswers(
+          answers.map((answer) =>
+            answer.id === answerId ? { ...answer, ...updates } : answer
+          )
+        );
+      } else {
+        const data = await response.json();
+        setError(data.error || '更新に失敗しました');
+      }
+    } catch (err) {
+      console.error('Update answer error:', err);
+      setError('更新に失敗しました');
+    }
+  };
+
   const handleDeleteAnswer = async (answerId: number, username: string) => {
     if (!confirm(`${username}の解答を削除しますか？\n削除後、このユーザーは再送信が可能になります。`)) {
       return;
@@ -283,12 +353,13 @@ export default function AnswersPage() {
         method: 'DELETE',
         headers: {
           Authorization: `Bearer ${token}`,
+          'X-Pusher-Socket-ID': pusherClient.connection.socket_id || '',
         },
       });
 
       if (response.ok) {
-        // 解答リストを再取得して更新
-        fetchData();
+        // 解答が削除されたことは Pusher で通知されるが、即座に反映させる
+        setAnswers(prev => prev.filter(ans => ans.id !== answerId));
         alert('解答を削除しました');
       } else {
         const data = await response.json();
@@ -317,7 +388,6 @@ export default function AnswersPage() {
     });
   };
 
-  // 表示画面に正解者を送信
   const sendToCast = async (questionNumber: number) => {
     if (!bcRef.current) {
       alert('BroadcastChannelが初期化されていません');
@@ -325,7 +395,6 @@ export default function AnswersPage() {
     }
 
     try {
-      // 正解の解答を取得
       const correctAnswers = answers.filter(
         (ans) =>
           ans.question.question_number === questionNumber &&
@@ -337,28 +406,23 @@ export default function AnswersPage() {
         return;
       }
 
-      // 経過時間順にソート
       const sortedAnswers = [...correctAnswers].sort((a, b) => {
         const timeA = a.elapsed_time_ms || 0;
         const timeB = b.elapsed_time_ms || 0;
         return timeA - timeB;
       });
 
-      // 得点を取得（APIから）
       const scoresRes = await fetch(`/api/rooms/${roomId}/scores`);
       if (!scoresRes.ok) {
         throw new Error('得点情報の取得に失敗しました');
       }
       const scoresData = await scoresRes.json();
 
-      // 問題別得点から該当問題を見つける
       const questionScore = scoresData.question_scores.find(
         (qs: any) => qs.question_number === questionNumber
       );
 
-      // 送信用データを作成
       const castData = sortedAnswers.map((ans, index) => {
-        // この解答に対応するチームの得点を探す
         const teamScore = questionScore?.team_scores.find(
           (ts: any) => ts.team_id === ans.user.team.id
         );
@@ -375,7 +439,6 @@ export default function AnswersPage() {
         };
       });
 
-      // BroadcastChannelで送信
       bcRef.current.postMessage({
         type: 'cast-correct-answers',
         data: {
@@ -395,7 +458,6 @@ export default function AnswersPage() {
     if (!bcRef.current) { alert('BroadcastChannelが初期化されていません'); return; }
     if (selectedAnswers.size === 0) { alert('送信する解答を選択してください'); return; }
     try {
-      // 選択された解答の中から正解のみをフィルタリング
       const selectedAnswersList = answers.filter(ans => selectedAnswers.has(ans.id) && ans.is_correct === true);
       if (selectedAnswersList.length === 0) {
         alert('正解の解答が選択されていません');
@@ -405,11 +467,9 @@ export default function AnswersPage() {
       const castData = sortedAnswers.map((ans, index) => ({ id: ans.id, question_number: ans.question_number, username: ans.user.username, team_name: ans.user.team.team_name, team_color: ans.user.team.team_color, score: ans.score || 0, elapsed_time_ms: ans.elapsed_time_ms || 0, rank: index + 1, answer_text: ans.answer_text, selected_choice: ans.selected_choice, question: ans.question }));
       bcRef.current.postMessage({ type: 'cast-correct-answers', data: { question_number: sortedAnswers[0]?.question_number || 0, answers: castData } });
       alert(`${selectedAnswersList.length}件の正解を表示画面に送信しました`);
-      // 選択状態を保持（クリアしない）
     } catch (err: any) { console.error('表示画面送信エラー:', err); alert(err.message); }
   };
 
-  // チェックボックスの切り替え
   const toggleAnswerSelection = (answerId: number) => {
     setSelectedAnswers(prev => {
       const newSet = new Set(prev);
@@ -422,7 +482,6 @@ export default function AnswersPage() {
     });
   };
 
-  // 正解のみを全選択
   const selectAllCorrect = () => {
     const correctIds = answers
       .filter(ans => ans.is_correct === true && (filterQuestion === null || ans.question_number === filterQuestion))
@@ -430,14 +489,11 @@ export default function AnswersPage() {
     setSelectedAnswers(new Set(correctIds));
   };
 
-  // 選択をクリア
   const clearSelection = () => {
     setSelectedAnswers(new Set());
   };
 
-  // 得点を確定
   const handleFinalizeQuestion = async (questionNumber: number) => {
-    // 未判定の解答がないかチェック
     const undecidedAnswers = answers.filter(
       ans => ans.question_number === questionNumber && ans.is_correct === null
     );
@@ -472,7 +528,35 @@ export default function AnswersPage() {
       const result = await res.json();
       alert(`問題${questionNumber}の得点を確定しました\n正解者数: ${result.correct_answers_count}`);
 
-      // 解答リストを再取得
+      fetchData();
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
+  const handleApplyPointMap = async (questionNumber: number) => {
+    if (!confirm(`問題${questionNumber}のポイントマップを再適用しますか？\n全ての正解者の得点が解答スピード順に再計算されます。`)) return;
+
+    try {
+      const token = localStorage.getItem('admin_token');
+      const res = await fetch(
+        `/api/rooms/${roomId}/questions/${questionNumber}/apply-points`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+        }
+      );
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'ポイントマップの適用に失敗しました');
+      }
+
+      const result = await res.json();
+      alert(`問題${questionNumber}のポイントマップを適用しました\n再計算対象: ${result.recalculated_count}件`);
+
       fetchData();
     } catch (err: any) {
       alert(err.message);
@@ -489,7 +573,7 @@ export default function AnswersPage() {
 
   return (
     <div className="min-h-screen bg-neutral-50 p-6">
-      <div className="max-w-7xl mx-auto">
+      <div className="max-w-[1600px] mx-auto">
         <div className="flex justify-between items-center mb-6">
           <div>
             <h1 className="text-3xl font-bold text-neutral-900">解答一覧</h1>
@@ -500,35 +584,38 @@ export default function AnswersPage() {
           <div className="flex gap-2 flex-wrap">
             <Link
               href={`/admin/room/${roomId}/control`}
-              className="px-3 py-2 bg-white text-neutral-900 text-sm rounded-lg font-medium border border-neutral-900 hover:bg-neutral-900 hover:text-white transition-all"
+              target="_blank"
+              className="px-3 py-2 bg-white text-neutral-900 text-sm rounded-lg font-medium border border-red-600 hover:bg-red-600 hover:text-white transition-all"
             >
-              問題開始管理
+              問題管理
             </Link>
             <Link
               href={`/admin/room/${roomId}/scores`}
-              className="px-3 py-2 bg-white text-neutral-900 text-sm rounded-lg font-medium border border-neutral-900 hover:bg-neutral-900 hover:text-white transition-all"
+              target="_blank"
+              className="px-3 py-2 bg-white text-neutral-900 text-sm rounded-lg font-medium border border-blue-600 hover:bg-blue-600 hover:text-white transition-all"
             >
               チーム得点
             </Link>
             <Link
               href={`/admin/room/${roomId}/individual-scores`}
-              className="px-3 py-2 bg-white text-neutral-900 text-sm rounded-lg font-medium border border-neutral-900 hover:bg-neutral-900 hover:text-white transition-all"
+              target="_blank"
+              className="px-3 py-2 bg-white text-neutral-900 text-sm rounded-lg font-medium border border-blue-600 hover:bg-blue-600 hover:text-white transition-all"
             >
               個人得点
             </Link>
             <Link
               href={`/admin/room/${roomId}/cast`}
               target="_blank"
-              className="px-3 py-2 bg-white text-neutral-900 text-sm rounded-lg font-medium border border-neutral-900 hover:bg-neutral-900 hover:text-white transition-all"
+              className="px-3 py-2 bg-white text-neutral-900 text-sm rounded-lg font-medium border border-blue-600 hover:bg-blue-600 hover:text-white transition-all"
             >
-              解答スピード表示
+              解答スピード
             </Link>
             <Link
               href={`/admin/room/${roomId}/participants`}
               target="_blank"
-              className="px-3 py-2 bg-white text-neutral-900 text-sm rounded-lg font-medium border border-neutral-900 hover:bg-neutral-900 hover:text-white transition-all"
+              className="px-3 py-2 bg-white text-neutral-900 text-sm rounded-lg font-medium border border-blue-600 hover:bg-blue-600 hover:text-white transition-all"
             >
-              参加者表示
+              参加者
             </Link>
             <button
               className="px-3 py-2 bg-white text-neutral-900 text-sm rounded-lg font-medium border border-neutral-900 hover:bg-neutral-900 hover:text-white transition-all"
@@ -592,23 +679,18 @@ export default function AnswersPage() {
         </div>
 
         <div className="flex gap-6">
-          <div className="flex-1">
+          <div className="flex-1 min-w-0">
             <div className="bg-white border border-neutral-200 rounded-xl p-6">
               <div className="flex justify-between items-center mb-4">
                 <h2 className="text-lg font-bold text-neutral-900">解答一覧（{answers.length}件）</h2>
                 <div className="flex gap-2">
                   {filterQuestion !== null && (
                     <>
-                      {answers.length > 0 && answers[0].question?.is_finalized && (
-                        <span className="px-3 py-2 bg-green-100 text-green-700 text-sm rounded-lg font-medium border border-green-300">
-                          ✓ 確定済み
-                        </span>
-                      )}
                       <button
-                        className="px-4 py-2 bg-purple-600 text-white text-sm rounded-lg font-medium hover:bg-purple-700 transition-all"
-                        onClick={() => handleFinalizeQuestion(filterQuestion)}
+                        className="px-4 py-2 bg-orange-600 text-white text-sm rounded-lg font-medium hover:bg-orange-700 transition-all"
+                        onClick={() => handleApplyPointMap(filterQuestion)}
                       >
-                        この問題の得点を確定
+                        ポイントマップを再適用
                       </button>
                     </>
                   )}
@@ -651,7 +733,8 @@ export default function AnswersPage() {
                         <th className="text-left py-3 px-4 font-semibold text-neutral-700">チーム</th>
                         <th className="text-left py-3 px-4 font-semibold text-neutral-700">ユーザー名</th>
                         <th className="text-left py-3 px-4 font-semibold text-neutral-700">解答内容</th>
-                        <th className="text-left py-3 px-4 font-semibold text-neutral-700">経過時間</th>
+                        <th className="text-left py-3 px-4 font-semibold text-neutral-700">解答時間</th>
+                        <th className="text-left py-3 px-4 font-semibold text-neutral-700">ポイント</th>
                         <th className="text-left py-3 px-4 font-semibold text-neutral-700">送信日時</th>
                         <th className="text-left py-3 px-4 font-semibold text-neutral-700">判定</th>
                         <th className="text-left py-3 px-4 font-semibold text-neutral-700">操作</th>
@@ -669,16 +752,16 @@ export default function AnswersPage() {
                               className="w-4 h-4 rounded border-neutral-300 text-neutral-900 focus:ring-neutral-900 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
                             />
                           </td>
-                          <td className="py-3 px-4 font-bold text-neutral-900">
+                          <td className="py-3 px-4 font-bold text-neutral-900 whitespace-nowrap">
                             {answer.question_number === 0 ? 'テスト' : `問題 ${answer.question_number}`}
                           </td>
                           <td className="py-3 px-4">
-                            <span className="inline-block px-2.5 py-1 rounded-md text-xs font-medium bg-blue-100 text-blue-700">
+                            <span className="inline-block px-2.5 py-1 rounded-md text-xs font-medium bg-blue-100 text-blue-700 whitespace-nowrap">
                               {answer.user.team.team_name}
                             </span>
                           </td>
-                          <td className="py-3 px-4 text-neutral-900">{answer.user.username}</td>
-                          <td className="py-3 px-4 max-w-xs truncate text-neutral-700">
+                          <td className="py-3 px-4 text-neutral-900 whitespace-nowrap">{answer.user.username}</td>
+                          <td className="py-3 px-4 min-w-[200px] text-neutral-700">
                             {answer.question?.answer_type === 'free_text' || !answer.question
                               ? answer.answer_text
                               : answer.selected_choice !== null &&
@@ -687,39 +770,90 @@ export default function AnswersPage() {
                                 }`
                                 : '選択肢不明'}
                           </td>
-                          <td className="py-3 px-4 text-left text-neutral-700 font-mono">{formatTime(answer.elapsed_time_ms)}</td>
-                          <td className="py-3 px-4 text-xs text-neutral-600">{formatDate(answer.submitted_at)}</td>
-                          <td className="py-3 px-4">
-                            {answer.is_correct === null ? (
-                              <span className="inline-block px-2.5 py-1 rounded-md text-xs font-medium bg-neutral-100 text-neutral-600">未判定</span>
-                            ) : answer.is_correct ? (
-                              <span className="inline-block px-2.5 py-1 rounded-md text-xs font-medium bg-green-100 text-green-700">正解</span>
-                            ) : (
-                              <span className="inline-block px-2.5 py-1 rounded-md text-xs font-medium bg-red-100 text-red-700">不正解</span>
-                            )}
+                          <td className="py-3 px-4 text-left">
+                            <input
+                              type="number"
+                              step="0.001"
+                              className="w-24 px-2 py-1 text-sm border border-neutral-300 rounded focus:outline-none focus:ring-1 focus:ring-neutral-900 bg-transparent font-mono"
+                              defaultValue={(Number(answer.elapsed_time_ms || 0) / 1000).toFixed(3)}
+                              onBlur={(e) => {
+                                const newSeconds = parseFloat(e.target.value);
+                                if (!isNaN(newSeconds)) {
+                                  const newMs = Math.round(newSeconds * 1000);
+                                  if (newMs !== Number(answer.elapsed_time_ms)) {
+                                    handleUpdateAnswerManual(answer.id, { elapsed_time_ms: newMs });
+                                  }
+                                }
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  (e.target as HTMLInputElement).blur();
+                                }
+                              }}
+                            />
+                            <span className="ml-1 text-xs text-neutral-500">秒</span>
                           </td>
                           <td className="py-3 px-4">
-                            <div className="flex gap-2">
+                            <input
+                              type="number"
+                              className="w-16 px-2 py-1 text-sm border border-neutral-300 rounded focus:outline-none focus:ring-1 focus:ring-neutral-900 bg-transparent"
+                              defaultValue={answer.score}
+                              onBlur={(e) => {
+                                const newScore = parseInt(e.target.value);
+                                if (!isNaN(newScore) && newScore !== answer.score) {
+                                  handleUpdateAnswerManual(answer.id, { score: newScore });
+                                }
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  (e.target as HTMLInputElement).blur();
+                                }
+                              }}
+                            />
+                            <span className="ml-1 text-xs text-neutral-500">pt</span>
+                          </td>
+                          <td className="py-3 px-4 text-xs text-neutral-600 whitespace-nowrap">
+                            {formatDate(answer.submitted_at)}
+                          </td>
+                          <td className="py-3 px-4">
+                            <div className="flex justify-center">
+                              {answer.is_correct === null ? (
+                                <span className="inline-block w-16 text-center py-1 rounded-md text-xs font-medium bg-neutral-100 text-neutral-600">未判定</span>
+                              ) : answer.is_correct ? (
+                                <span className="inline-block w-16 text-center py-1 rounded-md text-xs font-medium bg-green-100 text-green-700">正解</span>
+                              ) : (
+                                <span className="inline-block w-16 text-center py-1 rounded-md text-xs font-medium bg-red-100 text-red-700">不正解</span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="py-3 px-4 text-right whitespace-nowrap">
+                            <div className="flex gap-1 justify-end">
                               <button
-                                className="px-3 py-1 bg-green-600 text-white text-sm rounded font-medium hover:bg-green-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                className={`p-1.5 rounded transition-colors ${answer.is_correct === true ? 'bg-green-600 text-white' : 'bg-neutral-100 text-neutral-400 hover:text-green-600'}`}
                                 onClick={() => handleMarkAnswer(answer.id, true)}
-                                disabled={answer.is_correct === true}
+                                title="正解にする"
                               >
-                                ✓
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                </svg>
                               </button>
                               <button
-                                className="px-3 py-1 bg-red-600 text-white text-sm rounded font-medium hover:bg-red-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                className={`p-1.5 rounded transition-colors ${answer.is_correct === false ? 'bg-red-600 text-white' : 'bg-neutral-100 text-neutral-400 hover:text-red-600'}`}
                                 onClick={() => handleMarkAnswer(answer.id, false)}
-                                disabled={answer.is_correct === false}
+                                title="不正解にする"
                               >
-                                ✗
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
                               </button>
                               <button
-                                className="px-3 py-1 bg-neutral-700 text-white text-sm rounded font-medium hover:bg-neutral-900 transition-all"
+                                className="p-1.5 bg-neutral-100 text-neutral-400 hover:bg-red-100 hover:text-red-600 rounded transition-colors"
                                 onClick={() => handleDeleteAnswer(answer.id, answer.user.username)}
-                                title="解答を削除"
+                                title="削除"
                               >
-                                🗑️
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
                               </button>
                             </div>
                           </td>
@@ -732,50 +866,52 @@ export default function AnswersPage() {
             </div>
           </div>
 
-          <div className="w-80 flex flex-col gap-4">
-            <div className="bg-white border border-neutral-200 rounded-xl p-6 flex flex-col h-[600px]">
-              <div className="flex justify-between items-center mb-4">
-                <h2 className="text-lg font-bold text-neutral-900">コメント</h2>
-                <label className="flex items-center gap-2 text-xs text-neutral-600 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={autoScroll}
-                    onChange={(e) => setAutoScroll(e.target.checked)}
-                    className="rounded border-neutral-300 text-neutral-900 focus:ring-neutral-900"
-                  />
-                  自動スクロール
-                </label>
+          <div className="w-80 flex-shrink-0">
+            <div className="bg-white border border-neutral-200 rounded-xl overflow-hidden shadow-sm sticky top-6 max-h-[calc(100vh-3rem)] flex flex-col">
+              <div className="p-4 border-b border-neutral-200 bg-neutral-50 flex justify-between items-center">
+                <h2 className="font-bold text-neutral-900">リアルタイムコメント</h2>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setAutoScroll(!autoScroll)}
+                    className={`p-1.5 rounded text-[10px] font-bold uppercase transition-all ${autoScroll ? 'bg-green-600 text-white' : 'bg-neutral-200 text-neutral-500'}`}
+                  >
+                    Auto
+                  </button>
+                </div>
               </div>
-              <div className="flex-1 overflow-y-auto space-y-3 mb-4 pr-2 custom-scrollbar">
+
+              <div className="flex-1 overflow-y-auto p-4 space-y-4">
                 {comments.length === 0 ? (
-                  <p className="text-center text-neutral-500 py-8 text-sm">
+                  <p className="text-center text-neutral-500 py-4 text-sm mt-8">
                     コメントはまだありません
                   </p>
                 ) : (
                   comments.map((comment) => (
-                    <div key={comment.id} className="text-sm">
-                      <div className="flex items-center gap-2 mb-1">
+                    <div key={comment.id} className="animate-slide-in">
+                      <div className="flex justify-between items-center mb-1">
                         <span
-                          className="w-2 h-2 rounded-full"
+                          className="text-[10px] font-bold px-1.5 py-0.5 rounded text-white uppercase"
                           style={{ backgroundColor: comment.user.team.color }}
-                        ></span>
-                        <span className="font-bold text-neutral-900">{comment.user.username}</span>
-                        <span className="text-[10px] text-neutral-400">
+                        >
+                          {comment.user.team.name}
+                        </span>
+                        <span className="text-[9px] text-neutral-400 font-mono">
                           {new Date(comment.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </span>
                       </div>
-                      <p className="text-neutral-700 bg-neutral-50 p-2 rounded-lg border border-neutral-100">
-                        {comment.comment_text}
-                      </p>
+                      <div className="bg-neutral-50 border border-neutral-200 rounded-lg p-2.5">
+                        <p className="text-[11px] font-black text-neutral-900 mb-0.5">{comment.user.username}</p>
+                        <p className="text-xs text-neutral-700 leading-normal">{comment.comment_text}</p>
+                      </div>
                     </div>
                   ))
                 )}
-                <div ref={commentsEndRef} />
+                <div ref={commentsEndRef}></div>
               </div>
             </div>
           </div>
         </div>
-      </div >
-    </div >
+      </div>
+    </div>
   );
 }

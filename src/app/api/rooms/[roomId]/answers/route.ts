@@ -156,7 +156,7 @@ export async function POST(
       startTime = question.global_start_time;
     }
 
-    // 経過時間計算（ミリ秒）
+    // 解答時間計算（ミリ秒）
     let elapsedTime: bigint | null = null;
     if (startTime) {
       const now = new Date();
@@ -233,11 +233,20 @@ export async function POST(
     // Pusherで通知
     try {
       const { pusherServer } = await import('@/lib/pusher-server');
-      await pusherServer.trigger(`room-${roomId}`, 'new-answer', {
+      const socketId = request.headers.get('x-pusher-socket-id');
+
+      // 管理者向けに詳細な情報を通知
+      await pusherServer.trigger(`admin-room-${roomId}`, 'new-answer', {
         answer: {
           ...answer,
           elapsed_time_ms: answer.elapsed_time_ms ? Number(answer.elapsed_time_ms) : null,
         },
+      }, socketId ? { socket_id: socketId } : undefined);
+
+      // 全体（ランキング画面など）には更新があったことのみを通知（機密データを含まない）
+      await pusherServer.trigger(`room-${roomId}`, 'answer-submitted', {
+        userId: user.id,
+        questionNumber: question_number
       });
     } catch (pusherError) {
       console.error('Pusher trigger error:', pusherError);

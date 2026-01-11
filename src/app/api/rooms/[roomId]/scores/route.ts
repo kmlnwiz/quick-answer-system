@@ -138,7 +138,12 @@ export async function GET(
     });
 
     const teamScores = Array.from(teamScoresMap.values()).sort(
-      (a, b) => b.total_score - a.total_score
+      (a, b) => {
+        if (b.total_score !== a.total_score) {
+          return b.total_score - a.total_score;
+        }
+        return b.correct_count - a.correct_count;
+      }
     );
 
     // ユーザー別得点を集計
@@ -180,28 +185,30 @@ export async function GET(
     });
 
     const userScores = Array.from(userScoresMap.values()).sort(
-      (a, b) => b.total_score - a.total_score
+      (a, b) => {
+        if (b.total_score !== a.total_score) {
+          return b.total_score - a.total_score;
+        }
+        return b.correct_count - a.correct_count;
+      }
     );
 
-    // 問題別得点を集計 (0から室の問題数まで)
-    const questionScores: QuestionScore[] = [];
+    // 全正解の解答を取得（問題別集計用 - すでに取得済みの correctAnswers を再利用可能だが、
+    // ここでは question_scores 用に構造化する）
 
+    // 正解の解答を問題番号ごとにグループ化
+    const answersByQuestion = new Map<number, typeof correctAnswers>();
+    correctAnswers.forEach(ans => {
+      const qNum = ans.question_number;
+      if (!answersByQuestion.has(qNum)) {
+        answersByQuestion.set(qNum, []);
+      }
+      answersByQuestion.get(qNum)!.push(ans);
+    });
+
+    const questionScores: QuestionScore[] = [];
     for (let q = 0; q <= room.total_questions; q++) {
-      const questionAnswers = await prisma.answer.findMany({
-        where: {
-          room_id: roomId,
-          question_number: q,
-          is_correct: true,
-        },
-        include: {
-          user: {
-            include: {
-              team: true,
-            },
-          },
-        },
-        orderBy: { elapsed_time_ms: 'asc' },
-      });
+      const questionAnswers = answersByQuestion.get(q) || [];
 
       const teamScoresForQuestion = teams.map((team) => {
         const teamAnswer = questionAnswers.find(

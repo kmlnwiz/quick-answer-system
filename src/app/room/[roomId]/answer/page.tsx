@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { pusherClient } from '@/lib/pusher-client';
 
@@ -99,6 +99,12 @@ export default function AnswerPage() {
   const [showAnswerHistory, setShowAnswerHistory] = useState(false);
   const [showCommentHistory, setShowCommentHistory] = useState(false);
 
+  // 最新のユーザー情報を参照するためのRef (Pusherのクロージャ用)
+  const userStatusRef = useRef<UserStatus | null>(null);
+  useEffect(() => {
+    userStatusRef.current = userStatus;
+  }, [userStatus]);
+
   useEffect(() => {
     const token = localStorage.getItem('session_token');
     if (!token) {
@@ -188,22 +194,69 @@ export default function AnswerPage() {
 
   // Pusherのセットアップ
   useEffect(() => {
-    if (!room || !userStatus) return;
+    if (!room) return;
 
     const channel = pusherClient.subscribe(`room-${room.id}`);
 
     channel.bind('question-started', (data: any) => {
       // 全体開始、または自分のチームへの開始通知の場合
-      if (data.type === 'global' || (data.type === 'team' && data.teamId === userStatus.team.id)) {
+      // userStatusはクロージャにより最新ではない可能性があるが、team IDは通常変わらない
+      if (data.type === 'global' || (data.type === 'team' && userStatus && data.teamId === userStatus.team.id)) {
         setSelectedQuestion(data.questionNumber);
-        addToast(`問題 ${data.questionNumber === 0 ? '0 (テスト)' : data.questionNumber} が開始されました！`, 'success');
       }
+    });
+
+    const refreshUserData = async () => {
+      const token = localStorage.getItem('session_token');
+      if (!token) return;
+
+      // ユーザーStatus（スコア等）取得
+      const meRes = await fetch(`/api/rooms/${roomId}/me`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (meRes.ok) {
+        const meData = await meRes.json();
+        setUserStatus(meData.user);
+      }
+
+      // 解答履歴再取得
+      const ansResponse = await fetch(`/api/rooms/${roomId}/answers/my`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (ansResponse.ok) {
+        const ansData = await ansResponse.json();
+        setAnswers(ansData.answers || []);
+      }
+    };
+
+    channel.bind('answer-updated', (data: any) => {
+      // 自分の解答が更新された場合、または再計算が行われた場合のみリフレッシュ
+      const updatedUserId = data.updatedAnswer?.user_id || data.userId;
+      if (data.recalculated || (userStatusRef.current && updatedUserId === userStatusRef.current.id)) {
+        refreshUserData();
+      }
+    });
+
+    channel.bind('answer-deleted', (data: any) => {
+      // 自分の解答が削除された可能性があるためリフレッシュ
+      if (!data.userId || (userStatusRef.current && data.userId === userStatusRef.current.id)) {
+        refreshUserData();
+      }
+    });
+
+    channel.bind('question-finalized', (data: any) => {
+      addToast(`問題 ${data.questionNumber} の得点が確定しました！`, 'success');
+      refreshUserData();
     });
 
     return () => {
       pusherClient.unsubscribe(`room-${room.id}`);
     };
-  }, [room, userStatus]);
+  }, [room?.id]);
 
   // トースト自動削除
   useEffect(() => {
@@ -448,22 +501,24 @@ export default function AnswerPage() {
                 部屋: {room.room_code}
               </h2>
               <div className="flex items-center gap-2">
-                <p className="text-sm text-neutral-600 font-medium">
-                  {userStatus.username}
-                </p>
                 <span
-                  className="px-2 py-0.5 rounded text-[10px] font-bold text-white uppercase"
+                  className="px-2 py-0.5 rounded text-md w-32 text-center font-bold text-white uppercase mr-2"
                   style={{ backgroundColor: userStatus.team.color }}
                 >
                   {userStatus.team.name}
                 </span>
+                <p className="text-xl text-neutral-600 font-medium">
+                  {userStatus.username}
+                </p>
               </div>
             </div>
-            <div className="text-right">
-              <p className="text-xs text-neutral-500 font-bold uppercase tracking-wider">Total Score</p>
-              <p className="text-3xl font-black text-neutral-900 tracking-tighter">
-                {userStatus.total_score}<span className="text-sm ml-0.5">pts</span>
-              </p>
+            <div className="text-right flex flex-col items-end">
+              <p className="text-[10px] font-black text-neutral-400 uppercase tracking-[0.2em] mb-1">Your Total Score</p>
+              <div className="px-6 py-2 rounded-2xl bg-neutral-100 min-w-[180px] text-right">
+                <p className="text-5xl font-black text-rose-700 font-number tracking-normal">
+                  {userStatus.total_score.toLocaleString()}<span className="text-xl ml-2 font-bold opacity-50 font-sans tracking-normal">pts</span>
+                </p>
+              </div>
             </div>
           </div>
         </div>
@@ -504,7 +559,7 @@ export default function AnswerPage() {
                     解答を入力
                   </label>
                   <textarea
-                    className="w-full px-4 py-3 bg-white border border-neutral-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-neutral-900 focus:border-transparent transition-all resize-none h-32"
+                    className="w-full px-4 py-3 bg-white border border-neutral-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-neutral-900 focus:border-transparent transition-all resize-none h-24"
                     placeholder="ここに解答を入力してください"
                     value={answerText}
                     onChange={(e) => setAnswerText(e.target.value)}
@@ -538,7 +593,7 @@ export default function AnswerPage() {
                 )}
 
               <button
-                className="w-full py-4 bg-neutral-900 text-white rounded-lg font-medium hover:bg-neutral-800 transition-all disabled:opacity-50 disabled:cursor-not-allowed mb-3"
+                className="w-full py-4 bg-blue-900 text-white rounded-lg font-medium hover:bg-blue-800 transition-all disabled:opacity-50 disabled:cursor-not-allowed mb-3"
                 onClick={handleSubmit}
                 disabled={submitting}
               >
@@ -603,27 +658,14 @@ export default function AnswerPage() {
                       <div className="flex justify-between items-start mb-3">
                         <div>
                           <h4 className="font-bold text-neutral-900">
-                            {answer.question?.question_number === 0 ? 'Q0 (テスト)' : `問題 ${answer.question?.question_number ?? answer.id}`}
+                            {answer.question?.question_number === 0 ? 'テスト' : `問題 ${answer.question?.question_number ?? answer.id}`}
                           </h4>
                           <p className="text-xs text-neutral-500 mt-1">
                             {formatDate(answer.submitted_at)}
                           </p>
                         </div>
                         <div className="flex flex-col items-end gap-2">
-                          {answer.is_correct === null ? (
-                            <span className="inline-block px-2.5 py-1 rounded-md text-xs font-medium bg-neutral-100 text-neutral-600">
-                              判定待ち
-                            </span>
-                          ) : answer.is_correct ? (
-                            <span className="inline-block px-2.5 py-1 rounded-md text-xs font-medium bg-green-100 text-green-700">
-                              正解
-                            </span>
-                          ) : (
-                            <span className="inline-block px-2.5 py-1 rounded-md text-xs font-medium bg-red-100 text-red-700">
-                              不正解
-                            </span>
-                          )}
-                          <span className="text-xs font-mono text-neutral-500">
+                          <span className="text-sm font-bold text-neutral-700 font-number">
                             {formatTime(answer.elapsed_time_ms)}
                           </span>
                         </div>
@@ -755,7 +797,7 @@ export default function AnswerPage() {
 
                 <div className="bg-neutral-50 rounded-lg p-4 border border-neutral-200">
                   <p className="text-xs font-bold text-neutral-500 uppercase tracking-wider mb-1">解答時間</p>
-                  <p className="text-lg font-bold text-neutral-900 font-mono">
+                  <p className="text-lg font-bold text-neutral-900 font-number">
                     {formatTime(lastSubmittedAnswer.elapsed_time_ms)}
                   </p>
                 </div>

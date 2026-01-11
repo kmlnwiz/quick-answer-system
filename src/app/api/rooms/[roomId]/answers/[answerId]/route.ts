@@ -36,11 +36,11 @@ export async function PATCH(
       );
     }
 
-    const { is_correct } = await request.json();
+    const { is_correct, score: manual_score, elapsed_time_ms: manual_time } = await request.json();
 
-    if (is_correct === undefined || is_correct === null) {
+    if (is_correct === undefined && manual_score === undefined && manual_time === undefined) {
       return NextResponse.json(
-        { error: '正解/不正解の値が必要です' },
+        { error: '更新内容が必要です' },
         { status: 400 }
       );
     }
@@ -83,12 +83,15 @@ export async function PATCH(
       );
     }
 
+    const updateData: any = {};
+    if (is_correct !== undefined) updateData.is_correct = is_correct;
+    if (manual_score !== undefined) updateData.score = manual_score;
+    if (manual_time !== undefined) updateData.elapsed_time_ms = manual_time;
+
     // 正解/不正解を更新
     const updatedAnswer = await db.answer.update({
       where: { id: answerId },
-      data: {
-        is_correct,
-      },
+      data: updateData,
       include: {
         user: {
           include: {
@@ -99,62 +102,38 @@ export async function PATCH(
       },
     });
 
-    // この問題の得点を再計算
-    try {
-      const questionNumber = updatedAnswer.question_number;
-      const room = updatedAnswer.room;
-      // score_tableがnullの場合はデフォルト値を使用
-      const defaultScoreTable = [10, 7, 5, 3, 2, 1];
-      const scoreTable = (room.score_table as number[] | null) || defaultScoreTable;
-
-      // まず全解答の得点を0にリセット（この問題のみ）
-      await db.answer.updateMany({
-        where: {
-          room_id: roomId,
-          question_number: questionNumber,
-        },
-        data: { score: 0 },
-      });
-
-      // 正解の解答を経過時間順に取得
-      const correctAnswers = await db.answer.findMany({
-        where: {
-          room_id: roomId,
-          question_number: questionNumber,
-          is_correct: true,
-        },
-        orderBy: [
-          { elapsed_time_ms: 'asc' },
-        ],
-      });
-
-      // 順位に応じて得点を付与
-      for (let rank = 0; rank < correctAnswers.length; rank++) {
-        const ans = correctAnswers[rank];
-        const score = scoreTable[rank] || 0;
-
-        await db.answer.update({
-          where: { id: ans.id },
-          data: { score },
-        });
-      }
-    } catch (recalcError) {
-      console.error('Score recalculation error:', recalcError);
-      // 再計算エラーはログに記録するが、レスポンスは返す
-    }
-
     // Pusherで通知（解答が更新されたことを通知）
     try {
       const { pusherServer } = await import('@/lib/pusher-server');
-      await pusherServer.trigger(`room-${roomId}`, 'answer-updated', {
+      const socketId = request.headers.get('x-pusher-socket-id');
+
+      // 管理者向けに詳細な情報を通知
+      await pusherServer.trigger(`admin-room-${roomId}`, 'answer-updated', {
         answerId: updatedAnswer.id,
         questionNumber: updatedAnswer.question_number,
+        updatedAnswer: {
+          ...updatedAnswer,
+          elapsed_time_ms: updatedAnswer.elapsed_time_ms ? Number(updatedAnswer.elapsed_time_ms) : null,
+        },
+        recalculated: false
+      }, socketId ? { socket_id: socketId } : undefined);
+
+      // 本人向けに更新があったことのみを通知（機密保護のため、詳細な比較ロジックはクライアント側に任せる）
+      await pusherServer.trigger(`room-${roomId}`, 'answer-updated', {
+        answerId: updatedAnswer.id,
+        userId: updatedAnswer.user_id,
+        recalculated: false
       });
     } catch (pusherError) {
       console.error('Pusher trigger error:', pusherError);
     }
 
-    return NextResponse.json({ answer: updatedAnswer });
+    return NextResponse.json({
+      answer: {
+        ...updatedAnswer,
+        elapsed_time_ms: updatedAnswer.elapsed_time_ms ? Number(updatedAnswer.elapsed_time_ms) : null,
+      }
+    });
   } catch (error) {
     console.error('Mark answer error:', error);
     return NextResponse.json(
@@ -243,55 +222,16 @@ export async function DELETE(
       where: { id: answerId },
     });
 
-    // この問題の得点を再計算
-    try {
-      // score_tableがnullの場合はデフォルト値を使用
-      const defaultScoreTable = [10, 7, 5, 3, 2, 1];
-      const scoreTable = (room.score_table as number[] | null) || defaultScoreTable;
-
-      // まず全解答の得点を0にリセット（この問題のみ）
-      await db.answer.updateMany({
-        where: {
-          room_id: roomId,
-          question_number: questionNumber,
-        },
-        data: { score: 0 },
-      });
-
-      // 正解の解答を経過時間順に取得
-      const correctAnswers = await db.answer.findMany({
-        where: {
-          room_id: roomId,
-          question_number: questionNumber,
-          is_correct: true,
-        },
-        orderBy: [
-          { elapsed_time_ms: 'asc' },
-        ],
-      });
-
-      // 順位に応じて得点を付与
-      for (let rank = 0; rank < correctAnswers.length; rank++) {
-        const ans = correctAnswers[rank];
-        const score = scoreTable[rank] || 0;
-
-        await db.answer.update({
-          where: { id: ans.id },
-          data: { score },
-        });
-      }
-    } catch (recalcError) {
-      console.error('Score recalculation error:', recalcError);
-      // 再計算エラーはログに記録するが、レスポンスは返す
-    }
-
     // Pusherで通知（解答が削除されたことを通知）
     try {
       const { pusherServer } = await import('@/lib/pusher-server');
+      const socketId = request.headers.get('x-pusher-socket-id');
+
       await pusherServer.trigger(`room-${roomId}`, 'answer-deleted', {
         answerId,
         questionNumber,
-      });
+        userId: answer.user_id,
+      }, socketId ? { socket_id: socketId } : undefined);
     } catch (pusherError) {
       console.error('Pusher trigger error:', pusherError);
     }
