@@ -1,0 +1,132 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Room {
+  id                  Int       @id @default(autoincrement())
+  room_code           String    @unique @db.VarChar(6)
+  created_at          DateTime  @default(now())
+  allow_resubmission  Boolean   @default(false)
+  total_questions     Int       @default(10)
+  is_active           Boolean   @default(true)
+  score_table         Json      @default("[50, 40, 30, 20, 10]")
+
+  questions           Question[]
+  users               User[]
+  answers             Answer[]
+  comments            Comment[]
+
+  @@map("rooms")
+}
+
+model Team {
+  id            Int      @id @default(autoincrement())
+  name          String   @db.VarChar(50)
+  color         String   @db.VarChar(7)
+  display_order Int
+
+  users         User[]
+  question_team_starts QuestionTeamStart[]
+
+  @@map("teams")
+}
+
+model User {
+  id            Int      @id @default(autoincrement())
+  room_id       Int
+  username      String   @db.VarChar(100)
+  team_id       Int
+  joined_at     DateTime @default(now())
+  session_token String   @unique @db.VarChar(255)
+
+  room          Room     @relation(fields: [room_id], references: [id], onDelete: Cascade)
+  team          Team     @relation(fields: [team_id], references: [id])
+  answers       Answer[]
+  comments      Comment[]
+
+  @@unique([room_id, username])
+  @@map("users")
+}
+
+model Question {
+  id                  Int       @id @default(autoincrement())
+  room_id             Int
+  question_number     Int
+  answer_type         String    @db.VarChar(20)
+  choices             Json?
+  correct_answer      String?   @db.Text
+  global_start_time   DateTime?
+  allow_resubmission  Boolean?  // 問題ごとの再送許可（nullの場合は部屋の設定を使用）
+  is_finalized        Boolean   @default(false)  // 得点確定フラグ
+  finalized_at        DateTime? // 確定日時
+
+  room                Room      @relation(fields: [room_id], references: [id], onDelete: Cascade)
+  question_team_starts QuestionTeamStart[]
+
+  @@unique([room_id, question_number])
+  @@map("questions")
+}
+
+model QuestionTeamStart {
+  id            Int      @id @default(autoincrement())
+  question_id   Int
+  team_id       Int
+  start_time    DateTime
+
+  question      Question @relation(fields: [question_id], references: [id], onDelete: Cascade)
+  team          Team     @relation(fields: [team_id], references: [id], onDelete: Cascade)
+
+  @@unique([question_id, team_id])
+  @@map("question_team_starts")
+}
+
+model Answer {
+  id                Int       @id @default(autoincrement())
+  room_id           Int
+  user_id           Int
+  question_number   Int
+  answer_text       String    @db.Text
+  submitted_at      DateTime  @default(now())
+  elapsed_time_ms   BigInt?
+  submission_date   DateTime  @default(now())
+  is_correct        Boolean?
+  score             Int       @default(0)
+
+  room              Room      @relation(fields: [room_id], references: [id], onDelete: Cascade)
+  user              User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([room_id, question_number])
+  @@index([user_id, question_number, submission_date])
+  @@index([room_id, question_number, elapsed_time_ms])
+  @@map("answers")
+}
+
+model Comment {
+  id            Int      @id @default(autoincrement())
+  room_id       Int
+  user_id       Int
+  comment_text  String   @db.Text
+  created_at    DateTime @default(now())
+
+  room          Room     @relation(fields: [room_id], references: [id], onDelete: Cascade)
+  user          User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("comments")
+}
+
+model AdminSession {
+  id            Int      @id @default(autoincrement())
+  session_token String   @unique @db.VarChar(255)
+  created_at    DateTime @default(now())
+  expires_at    DateTime
+
+  @@map("admin_sessions")
+}
