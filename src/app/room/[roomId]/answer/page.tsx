@@ -513,10 +513,10 @@ export default function AnswerPage() {
               </div>
             </div>
             <div className="text-right flex flex-col items-end">
-              <p className="text-[10px] font-black text-neutral-400 uppercase tracking-[0.2em] mb-1">Your Total Score</p>
+              <p className="text-[10px] font-black text-amber-800 uppercase tracking-[0.2em] mb-1">Your Total Score</p>
               <div className="px-6 py-2 rounded-2xl bg-neutral-100 min-w-[180px] text-right">
-                <p className="text-5xl font-black text-rose-700 font-number tracking-normal">
-                  {userStatus.total_score.toLocaleString()}<span className="text-xl ml-2 font-bold opacity-50 font-sans tracking-normal">pts</span>
+                <p className="text-3xl font-black text-amber-700 font-number tracking-normal">
+                  {userStatus.total_score.toLocaleString()}<span className="text-xl ml-2 font-bold opacity-70 font-sans tracking-normal">pts</span>
                 </p>
               </div>
             </div>

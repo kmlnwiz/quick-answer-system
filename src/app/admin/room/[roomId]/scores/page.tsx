@@ -124,7 +124,7 @@ export default function ScoresProjectionPage() {
         {/* Header */}
         <header className="flex justify-between items-end mb-12 border-b border-white/20 pb-8">
           <div>
-            <h1 className="text-7xl font-bold tracking-tight uppercase">
+            <h1 className="text-5xl font-bold tracking-tight uppercase">
               チームランキング
             </h1>
             <p className="text-lg font-medium text-neutral-500 mt-2 tracking-wider uppercase">

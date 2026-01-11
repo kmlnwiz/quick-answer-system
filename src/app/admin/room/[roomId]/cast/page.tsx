@@ -88,10 +88,24 @@ export default function CastPage() {
     };
   }, [roomId]);
 
-  const formatTime = (ms: number) => {
-    const seconds = (ms / 1000).toFixed(3);
-    return `${seconds}秒`;
+  const formatTimeParts = (ms: number) => {
+    const seconds = ms / 1000;
+    const [int, decimal] = seconds.toFixed(3).split(".");
+    return { int, decimal };
   };
+
+  const formatTime = (ms: number) => {
+    const { int, decimal } = formatTimeParts(ms);
+
+    return (
+      <>
+        {int}.
+        <span className="text-4xl mr-4">{decimal}</span>
+        秒
+      </>
+    );
+  };
+
 
   const handleClearCast = () => {
     if (bcRef.current) {
@@ -137,8 +151,8 @@ export default function CastPage() {
                 >
                   <div className="w-full flex items-center p-3 gap-4">
                     {/* Rank Badge */}
-                    <div className="w-16 h-16 flex-shrink-0 flex items-center justify-center border-r border-white/10">
-                      <span className={`text-4xl font-black font-number ${(index === 0 || answer.elapsed_time_ms === answers[0].elapsed_time_ms) ? 'text-yellow-400' :
+                    <div className="w-24 h-16 flex-shrink-0 flex items-center justify-center border-r border-white/10">
+                      <span className={`text-5xl font-black font-number ${(index === 0 || answer.elapsed_time_ms === answers[0].elapsed_time_ms) ? 'text-yellow-400' :
                         (index > 0 && answers[index].elapsed_time_ms === answers[1]?.elapsed_time_ms) ? 'text-neutral-300' :
                           (index > 0 && answers[index].elapsed_time_ms === answers[2]?.elapsed_time_ms) ? 'text-orange-400' :
                             'text-neutral-600'
@@ -155,26 +169,16 @@ export default function CastPage() {
                           {answer.team_name}
                         </span>
                       </div>
-                      <div className="text-3xl font-bold tracking-tight">
+                      <div className="text-4xl font-bold tracking-tight">
                         {answer.username}
                       </div>
-                      {/* 解答内容を表示 */}
-                      {answer.question && (
-                        <div className="mt-1 text-base text-neutral-400 font-medium">
-                          {answer.question.answer_type === 'free_text'
-                            ? answer.answer_text
-                            : answer.selected_choice !== null && answer.selected_choice !== undefined && answer.question.choices
-                              ? `${answer.selected_choice + 1}. ${answer.question.choices[answer.selected_choice]}`
-                              : ''}
-                        </div>
-                      )}
                     </div>
 
                     {/* Speed & Score */}
                     <div className="text-right px-4 flex items-center gap-6">
                       <div className="border-l border-white/10 pl-6 min-w-[120px]">
                         <div className="text-[12px] font-bold text-neutral-500 mb-1 uppercase tracking-widest">Speed</div>
-                        <div className="text-4xl font-bold text-white font-number">
+                        <div className="text-5xl font-bold text-white font-number">
                           {formatTime(answer.elapsed_time_ms)}
                         </div>
                       </div>
