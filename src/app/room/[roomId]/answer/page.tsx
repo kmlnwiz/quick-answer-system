@@ -757,8 +757,8 @@ export default function AnswerPage() {
           ></div>
 
           {/* オフキャンバス本体 */}
-          <div className="fixed right-0 top-0 h-full w-full max-w-md bg-white shadow-2xl z-50 overflow-y-auto animate-slide-from-right">
-            <div className="p-6">
+          <div className="fixed right-0 top-0 h-full w-full md:max-w-md bg-white shadow-2xl z-50 overflow-y-auto animate-slide-from-right">
+            <div className="p-4 md:p-6">
               <div className="flex justify-between items-start mb-6">
                 <h2 className="text-2xl font-bold text-neutral-900">解答を送信しました</h2>
                 <button
