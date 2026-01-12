@@ -71,6 +71,30 @@ export default function CastPage() {
             const sorted = combined.sort((a, b) => (a.elapsed_time_ms || 0) - (b.elapsed_time_ms || 0));
             return sorted.map((ans, index) => ({ ...ans, rank: index + 1 }));
           });
+        } else if (type === 'cast-single-answer') {
+          // 単一の解答を追加
+          const newAnswer = data as CastAnswer;
+          setCurrentQuestion(newAnswer.question_number);
+
+          setAnswers(prev => {
+            // 既に存在する場合は追加しない
+            if (prev.some(a => a.id === newAnswer.id)) {
+              return prev;
+            }
+
+            const combined = [...prev, newAnswer];
+            // 解答時間順にソートして順位を再計算
+            const sorted = combined.sort((a, b) => (a.elapsed_time_ms || 0) - (b.elapsed_time_ms || 0));
+            return sorted.map((ans, index) => ({ ...ans, rank: index + 1 }));
+          });
+        } else if (type === 'remove-answer') {
+          // 特定の解答を削除
+          const { answerId } = data;
+          setAnswers(prev => {
+            const filtered = prev.filter(a => a.id !== answerId);
+            // 順位を再計算
+            return filtered.map((ans, index) => ({ ...ans, rank: index + 1 }));
+          });
         } else if (type === 'clear-cast') {
           // 画面をクリア
           setAnswers([]);
