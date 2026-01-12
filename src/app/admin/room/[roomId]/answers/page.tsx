@@ -473,11 +473,42 @@ export default function AnswersPage() {
   const toggleAnswerSelection = (answerId: number) => {
     setSelectedAnswers(prev => {
       const newSet = new Set(prev);
-      if (newSet.has(answerId)) {
-        newSet.delete(answerId);
-      } else {
+      const isAdding = !newSet.has(answerId);
+
+      if (isAdding) {
         newSet.add(answerId);
+        // チェックをつけたら即座に送信
+        const answer = answers.find(ans => ans.id === answerId);
+        if (answer && answer.is_correct === true && bcRef.current) {
+          const castData = {
+            id: answer.id,
+            question_number: answer.question_number,
+            username: answer.user.username,
+            team_name: answer.user.team.team_name,
+            team_color: answer.user.team.team_color,
+            score: answer.score || 0,
+            elapsed_time_ms: answer.elapsed_time_ms || 0,
+            rank: 0,
+            answer_text: answer.answer_text,
+            selected_choice: answer.selected_choice,
+            question: answer.question
+          };
+          bcRef.current.postMessage({
+            type: 'cast-single-answer',
+            data: castData
+          });
+        }
+      } else {
+        newSet.delete(answerId);
+        // チェックを外したら即座に削除メッセージを送信
+        if (bcRef.current) {
+          bcRef.current.postMessage({
+            type: 'remove-answer',
+            data: { answerId }
+          });
+        }
       }
+
       return newSet;
     });
   };
@@ -489,8 +520,12 @@ export default function AnswersPage() {
     setSelectedAnswers(new Set(correctIds));
   };
 
-  const clearSelection = () => {
+  const clearAllCheckboxes = () => {
+    // すべてのチェックを外し、表示をクリア
     setSelectedAnswers(new Set());
+    if (bcRef.current) {
+      bcRef.current.postMessage({ type: 'clear-cast' });
+    }
   };
 
   const handleFinalizeQuestion = async (questionNumber: number) => {
@@ -708,6 +743,14 @@ export default function AnswersPage() {
                   >
                     正解を全選択
                   </button>
+                  {selectedAnswers.size > 0 && (
+                    <button
+                      className="px-4 py-2 bg-red-600 text-white text-sm rounded-lg font-medium hover:bg-red-700 transition-all"
+                      onClick={clearAllCheckboxes}
+                    >
+                      一括チェック解除
+                    </button>
+                  )}
                   {filterQuestion !== null && (
                     <button
                       className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg font-medium hover:bg-blue-700 transition-all"
